@@ -1,0 +1,195 @@
+---
+title: "PA"
+output: html_document
+date: "2024-08-28"
+---
+
+Install necessary packages 
+#Load the libraries
+```{r}
+install.packages(c("dplyr", "tidyr", "caret", "stringr", "mice"))
+library(dplyr)
+library(tidyr)
+library(caret)
+library(stringr)
+library(mice)
+library(ggplot2)
+library(reshape2)
+library(readxl)
+```
+
+#Load the dataset
+```{r}
+train_data <- read_excel("C:/Users/Admin/Downloads/train.xlsx")
+View(train_data)
+```
+
+
+#---------------------------PREPROCESSING DATA---------------------------------
+
+
+-///*HANDLING MISSING VALUES-------------------------------------------------------
+#Check missing values in the entire dataset
+```{r}
+missing_values_summary <- sapply(train_data, function(x) sum(is.na(x)))
+print(missing_values_summary)
+```
+
+# Impute missing values for numerical variables using median
+Median for Numerical Variables
+Mileage, Engine, Max Power, Seats:
+Mileage (e.g., kmpl): Cars can have varying fuel efficiency, and using the median helps avoid skew from very high or very low values.
+Engine (e.g., CC): Engine sizes can vary widely, and the median provides a typical value without being skewed by rare, extreme sizes.
+Max Power (e.g., bhp): Similar to engine size, power ratings can have outliers; the median reflects a typical car's power.
+Seats: Most cars have a standard number of seats; the median helps maintain a realistic average when data is missing.
+
+```{r}
+train_data$mileage <- ifelse(is.na(train_data$mileage), median(as.numeric(str_extract(train_data$mileage, "\\d+\\.\\d+")), na.rm = TRUE), train_data$mileage)
+train_data$engine <- ifelse(is.na(train_data$engine), median(as.numeric(str_extract(train_data$engine, "\\d+")), na.rm = TRUE), train_data$engine)
+train_data$max_power <- ifelse(is.na(train_data$max_power), median(as.numeric(str_extract(train_data$max_power, "\\d+")), na.rm = TRUE), train_data$max_power)
+train_data$seats <- ifelse(is.na(train_data$seats), median(train_data$seats, na.rm = TRUE), train_data$seats)
+View(train_data)
+```
+
+
+# Replace missing torque with the mode (most frequent value)
+Standard Settings: Many cars share engine configurations, leading to repeated torque values. The mode captures this commonality.
+Consistency: Using the mode ensures that missing torque values are filled with typical, realistic configurations seen in the dataset.
+```{r}
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+train_data$torque <- ifelse(is.na(train_data$torque), Mode(train_data$torque), train_data$torque)
+View(train_data)
+```
+
+
+
+# CONVERTING NON-NUMERIC COLUMNS-----------------------------------------------
+# Extract numerical part from mileage, engine, max_power
+```{r}
+train_data$mileage <- as.numeric(str_extract(train_data$mileage, "\\d+\\.\\d+|\\d+"))
+train_data$engine <- as.numeric(str_extract(train_data$engine, "\\d+"))
+train_data$max_power <- as.numeric(str_extract(train_data$max_power, "\\d+\\.\\d+|\\d+"))
+train_data$torque <- as.numeric(str_extract(train_data$torque, "^\\d+"))
+View(train_data)
+```
+
+
+# Convert categorical variables to factors
+```{r}
+train_data$fuel <- as.factor(train_data$fuel)
+train_data$seller_type <- as.factor(train_data$seller_type)
+train_data$transmission <- as.factor(train_data$transmission)
+train_data$owner <- as.factor(train_data$owner)
+
+# Convert categorical variables to factors with specified reference levels
+train_data$fuel <- relevel(train_data$fuel, ref = "Diesel") 
+train_data$seller_type <- relevel(train_data$seller_type, ref = "Individual")
+train_data$transmission <- relevel(train_data$transmission, ref = "Manual")  
+train_data$owner <- relevel(train_data$owner, ref = "First Owner") 
+
+proportions(table(train_data$fuel))
+proportions(table(train_data$seller_type))
+proportions(table(train_data$transmission))
+proportions(table(train_data$owner))
+
+```
+
+
+# FEATURE ENGINEERING----------------------------------------------------------
+# Create a new column for the age of the car
+```{r}
+train_data$car_age <- 2024 - train_data$year
+View(train_data)
+```
+
+# Remove columns that are irrelevant for prediction, such as 'name' and 'year'
+# Do not run this code
+```{r}
+train_data <- train_data %>% select(-c(name, year))
+```
+
+
+
+#ENCODING CATEGORICAL VARIABLES------------------------------------------------
+# Use one-hot encoding for categorical variables/ Create dummy variables for specific columns (phương án 1)
+```{r}
+dummy_model <- dummyVars(" ~ fuel + seller_type + transmission + owner", data = train_data)
+train_data_dummies <- predict(dummy_model, newdata = train_data)
+train_data_dummies <- as.data.frame(train_data_dummies)
+```
+
+#Use Label Encoding (phương án 2)
+```{r}
+train_data <- data.frame(
+  fuel = factor(c("Petrol", "Diesel", "Petrol")),
+  seller_type = factor(c("Dealer", "Individual", "Dealer")),
+  transmission = factor(c("Manual", "Automatic", "Automatic")),
+  owner = factor(c("First Owner", "Second Owner", "First Owner"))
+)
+
+# Convert categorical columns to numeric codes
+train_data$fuel <- as.numeric(train_data$fuel)
+train_data$seller_type <- as.numeric(train_data$seller_type)
+train_data$transmission <- as.numeric(train_data$transmission)
+train_data$owner <- as.numeric(train_data$owner)
+```
+
+
+# Remove original categorical columns from the original data
+```{r}
+train_data <- train_data %>%
+  select(-c(fuel, seller_type, transmission, owner)) %>%
+  bind_cols(train_data_dummies)
+View(train_data)
+```
+
+
+
+# NORMALIZE/STANDARDIZE DATA---------------------------------------------------
+# Standardize the numerical features
+```{r}
+summary(train_data)
+pre_process <- preProcess(train_data, method = c("center", "scale"))
+train_data <- predict(pre_process, train_data)
+```
+
+
+# FINAL CHECKS-----------------------------------------------------------------
+# Check the structure of the processed data
+```{r}
+str(train_data)
+```
+
+# Check for any remaining missing values
+```{r}
+sum(is.na(train_data))
+
+missing_values <- sapply(train_data, function(x) sum(is.na(x)))
+missing_values[missing_values > 0]
+missing_positions <- which(is.na(train_data$max_power))
+```
+
+There are 1 missing value in max_power col, row 4682
+
+#Replace this missing value with the median(max_power)
+```{r}
+train_data$max_power <- ifelse(is.na(train_data$max_power),                               median(as.numeric(train_data$max_power), na.rm = TRUE),train_data$max_power)
+sum(is.na(train_data))
+```
+
+
+# Save the Preprocessed Data
+```{r}
+write.csv(train_data, "C:/Users/Admin/Downloads/PA-Data_preprocessed.csv", row.names = FALSE)
+```
+
+
+
+
+
+#------------------------------MODEL BUILDING----------------------------------
+
+
